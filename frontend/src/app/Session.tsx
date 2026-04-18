@@ -29,9 +29,7 @@ export default function Session({ onExit }: { onExit: () => void }) {
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStream;
   }, [remoteStream]);
 
-  useEffect(() => {
-    start();
-  }, [start]);
+  const notStarted = status === "idle" || status === "error";
 
   return (
     <main className="relative min-h-screen px-6 py-8">
@@ -57,6 +55,29 @@ export default function Session({ onExit }: { onExit: () => void }) {
           <div className="rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
             {error}
           </div>
+        )}
+
+        {notStarted && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex flex-col items-center gap-4 rounded-3xl border border-white/10 bg-white/5 px-6 py-10 text-center backdrop-blur-md"
+          >
+            <p className="text-sm text-white/70">
+              Click below to grant screen-share and microphone access.
+              <br />
+              <span className="text-xs text-white/40">
+                macOS: if no window picker appears, enable Chrome in{" "}
+                <em>System Settings → Privacy &amp; Security → Screen Recording</em>, then reload.
+              </span>
+            </p>
+            <button
+              onClick={() => start()}
+              className="rounded-full bg-fog px-8 py-3 text-sm font-medium text-ink transition-transform hover:scale-[1.02]"
+            >
+              Grant screen + mic
+            </button>
+          </motion.div>
         )}
 
         <div className="grid gap-6 md:grid-cols-2">
