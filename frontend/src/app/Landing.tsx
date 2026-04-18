@@ -39,10 +39,10 @@ export default function Landing({ onStart }: { onStart: () => void }) {
   return (
     <main className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-6">
       <div className="pointer-events-none absolute inset-0 -z-10 flex items-center justify-center">
-        <Orb className="h-[80vh] w-[80vh] opacity-90" />
+        <Orb className="h-[55vh] w-[55vh] opacity-70" />
       </div>
 
-      <div className="pointer-events-none absolute inset-0 -z-10 bg-gradient-to-b from-transparent via-transparent to-ink/80" />
+      <div className="pointer-events-none absolute inset-0 -z-10 bg-gradient-to-b from-ink/40 via-ink/30 to-ink/85" />
 
       <motion.div
         initial={{ opacity: 0, y: -8 }}
