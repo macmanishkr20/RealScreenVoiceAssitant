@@ -27,11 +27,12 @@ You only edit **two `.env` files**. That's the whole surface.
 ### 1. Backend
 
 ```bash
-cd realtime-assistant/backend
+cd backend
 cp .env.example .env     # M1 runs even without filling the keys in
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install --upgrade pip
+pip install -r requirements.txt   # or: pip install -e .  (uses pyproject.toml)
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
@@ -40,7 +41,7 @@ Health check: open `http://127.0.0.1:8000/health` → `{"status":"ok","milestone
 ### 2. Frontend
 
 ```bash
-cd realtime-assistant/frontend
+cd frontend
 cp .env.example .env
 npm install
 npm run dev

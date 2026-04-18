@@ -1,0 +1,27 @@
+# Core — M1 (pipes alive)
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.9.0
+pydantic-settings>=2.6.0
+python-dotenv>=1.0.1
+aiortc>=1.9.0
+av>=12.3.0
+numpy>=1.26.0
+Pillow>=10.4.0
+imagehash>=4.3.1
+websockets>=13.0
+httpx>=0.27.0
+
+# M2 — VAD + Azure Speech (install when you reach M2)
+# webrtcvad>=2.0.10
+# azure-cognitiveservices-speech>=1.40.0
+
+# M4 — Agent Framework + Azure OpenAI
+# openai>=1.54.0
+# agent-framework>=0.1.0
+
+# M5 — Browser tool
+# playwright>=1.47.0
+
+# M6 — Cosmos memory
+# azure-cosmos>=4.7.0
