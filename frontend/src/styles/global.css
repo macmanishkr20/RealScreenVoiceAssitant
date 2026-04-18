@@ -1,0 +1,78 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --cursor-x: 50%;
+  --cursor-y: 50%;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family:
+    "SF Pro Display",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Inter",
+    system-ui,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #0a0a0b;
+  color: #f5f5f7;
+  overflow-x: hidden;
+}
+
+.gradient-mesh {
+  background:
+    radial-gradient(
+      60% 80% at var(--cursor-x) var(--cursor-y),
+      rgba(0, 113, 227, 0.45) 0%,
+      rgba(168, 85, 247, 0.25) 35%,
+      rgba(236, 72, 153, 0.18) 55%,
+      transparent 75%
+    ),
+    radial-gradient(
+      40% 60% at 80% 20%,
+      rgba(56, 189, 248, 0.25) 0%,
+      transparent 60%
+    ),
+    radial-gradient(
+      50% 70% at 20% 80%,
+      rgba(168, 85, 247, 0.18) 0%,
+      transparent 65%
+    ),
+    #0a0a0b;
+  filter: saturate(1.1);
+  transition: background 400ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.shimmer-text {
+  background: linear-gradient(
+    90deg,
+    rgba(245, 245, 247, 0.4) 0%,
+    rgba(245, 245, 247, 1) 50%,
+    rgba(245, 245, 247, 0.4) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
