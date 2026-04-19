@@ -75,7 +75,17 @@ class SttSession:
                 self._emit("transcript", text=text, final=True)
 
         def _cancel(evt):
-            log.warning("STT canceled: %s", evt)
+            details = getattr(evt, "cancellation_details", None) or getattr(
+                evt.result, "cancellation_details", None
+            )
+            reason = getattr(details, "reason", None) if details else None
+            err = getattr(details, "error_details", None) if details else None
+            log.warning(
+                "STT canceled reason=%s err=%s raw=%s",
+                reason,
+                err,
+                evt,
+            )
 
         self._recognizer.recognizing.connect(_partial)
         self._recognizer.recognized.connect(_final)

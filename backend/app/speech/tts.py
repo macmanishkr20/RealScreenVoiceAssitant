@@ -54,7 +54,12 @@ async def synthesize(text: str) -> AsyncIterator[bytes]:
 
     reason = result.reason
     if reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
-        log.warning("TTS failed: %s / %s", reason, getattr(result, "error_details", ""))
+        details = getattr(result, "cancellation_details", None)
+        c_reason = getattr(details, "reason", None) if details else None
+        err = getattr(details, "error_details", None) if details else None
+        log.warning(
+            "TTS failed reason=%s cancel=%s err=%s", reason, c_reason, err
+        )
         return
 
     # The result contains the full audio; chunk it so the track sees sensible frames.
