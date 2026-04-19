@@ -73,6 +73,9 @@ class SttSession:
             text = evt.result.text.strip()
             if text:
                 self._emit("transcript", text=text, final=True)
+                asyncio.run_coroutine_threadsafe(
+                    self._session.push_utterance(text), self._loop
+                )
 
         def _cancel(evt):
             details = getattr(evt, "cancellation_details", None) or getattr(

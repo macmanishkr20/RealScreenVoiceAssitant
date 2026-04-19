@@ -10,13 +10,19 @@ export type ControlMsg =
   | { type: "pong" }
   | { type: "echo"; text: string }
   | { type: "transcript"; text: string; final: boolean }
+  | { type: "assistant"; text: string; final: boolean }
   | { type: "speaking"; text: string; state: "start" | "end" };
 
-export type Transcript = { id: number; text: string; final: boolean };
+export type Turn = {
+  id: number;
+  role: "user" | "assistant";
+  text: string;
+  final: boolean;
+};
 
 export function useControl() {
   const [open, setOpen] = useState(false);
-  const [transcripts, setTranscripts] = useState<Transcript[]>([]);
+  const [turns, setTurns] = useState<Turn[]>([]);
   const [speaking, setSpeaking] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const nextIdRef = useRef(0);
@@ -36,18 +42,19 @@ export function useControl() {
       } catch {
         return;
       }
-      if (msg.type === "transcript") {
-        setTranscripts((prev) => {
-          // Collapse partials: if the last entry is non-final, replace it.
+      if (msg.type === "transcript" || msg.type === "assistant") {
+        const role: Turn["role"] = msg.type === "transcript" ? "user" : "assistant";
+        setTurns((prev) => {
+          // Collapse streaming partials for the same role at the tail.
           const last = prev[prev.length - 1];
-          if (last && !last.final) {
+          if (last && last.role === role && !last.final) {
             const next = prev.slice(0, -1);
-            next.push({ id: last.id, text: msg.text, final: msg.final });
+            next.push({ id: last.id, role, text: msg.text, final: msg.final });
             return next;
           }
           return [
             ...prev,
-            { id: nextIdRef.current++, text: msg.text, final: msg.final },
+            { id: nextIdRef.current++, role, text: msg.text, final: msg.final },
           ];
         });
       } else if (msg.type === "speaking") {
@@ -61,7 +68,7 @@ export function useControl() {
     wsRef.current?.send(JSON.stringify({ type: "speak", text }));
   }, []);
 
-  const clearTranscripts = useCallback(() => setTranscripts([]), []);
+  const clearTurns = useCallback(() => setTurns([]), []);
 
-  return { open, transcripts, speaking, speak, clearTranscripts };
+  return { open, turns, speaking, speak, clearTurns };
 }

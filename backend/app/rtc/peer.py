@@ -1,9 +1,12 @@
-"""aiortc PeerConnection wiring (M2).
+"""aiortc PeerConnection wiring (M3).
 
 Inbound audio -> AudioPipeline -> Azure STT -> transcript events on
-session bus. Inbound video is accepted (frame sampling arrives in M3).
-Outbound: a single send-only TTSAudioTrack backed by Azure TTS streams,
-driven by text pushed onto `session.speak_queue` from the control WS.
+session bus, with finalized utterances also pushed onto the utterance
+queue for the agent loop. Inbound video -> FrameSampler keeps the most
+recent JPEG on the session for vision grounding. Outbound: a single
+send-only TTSAudioTrack backed by Azure TTS streams. Two loops consume
+text: `_speak_loop` (direct "speak this" commands from the control WS)
+and `_agent_loop` (STT finals -> GPT -> TTS).
 """
 from __future__ import annotations
 
@@ -14,7 +17,9 @@ from typing import Dict
 
 from aiortc import RTCPeerConnection, RTCSessionDescription
 
+from app.agents.gpt import answer as gpt_answer
 from app.rtc.audio_pipeline import AudioPipeline
+from app.rtc.frame_sampler import FrameSampler
 from app.rtc.tts_track import TTSAudioTrack
 from app.session import Session
 from app.speech.tts import synthesize
@@ -39,16 +44,23 @@ async def create_peer(
     speak_task = asyncio.create_task(
         _speak_loop(session, tts_track), name=f"speak-{session.id}"
     )
+    agent_task = asyncio.create_task(
+        _agent_loop(session, tts_track), name=f"agent-{session.id}"
+    )
 
     pipelines: list[AudioPipeline] = []
+    samplers: list[FrameSampler] = []
 
     @pc.on("connectionstatechange")
     async def _on_state():
         log.info("[%s] connectionState=%s", pc_id, pc.connectionState)
         if pc.connectionState in ("failed", "closed", "disconnected"):
             speak_task.cancel()
+            agent_task.cancel()
             for p in pipelines:
                 p.stop()
+            for s in samplers:
+                s.stop()
             await _drop(pc_id)
 
     @pc.on("track")
@@ -58,7 +70,10 @@ async def create_peer(
             p = AudioPipeline(session, track)
             p.start()
             pipelines.append(p)
-        # Video is accepted here; frame sampler wires in M3.
+        elif track.kind == "video":
+            s = FrameSampler(session, track)
+            s.start()
+            samplers.append(s)
 
         @track.on("ended")
         async def _on_end():
@@ -76,14 +91,49 @@ async def _speak_loop(session: Session, track: TTSAudioTrack) -> None:
     try:
         while True:
             text = await session.speak_queue.get()
-            await session.emit(type="speaking", text=text, state="start")
-            async for chunk in synthesize(text):
-                await track.push(chunk)
-            await session.emit(type="speaking", text=text, state="end")
+            await _speak(session, track, text)
     except asyncio.CancelledError:
         pass
     except Exception:
         log.exception("speak loop crashed session=%s", session.id)
+
+
+async def _agent_loop(session: Session, track: TTSAudioTrack) -> None:
+    """Drain STT final utterances; ask GPT grounded on the latest frame; speak the reply."""
+    try:
+        while True:
+            transcript = await session.utterance_queue.get()
+            if len(transcript.split()) < 2:
+                log.info("agent: skipping trivial utterance %r", transcript)
+                continue
+            frame = session.latest_frame_jpeg
+            log.info(
+                "agent turn session=%s transcript=%r frame=%s",
+                session.id,
+                transcript[:80],
+                f"{len(frame)}B" if frame else "none",
+            )
+            reply = ""
+            async for text_chunk in gpt_answer(transcript, frame):
+                reply += text_chunk
+                await session.emit(type="assistant", text=reply, final=False)
+            reply = reply.strip()
+            if not reply:
+                log.warning("agent: empty reply for %r", transcript[:60])
+                continue
+            await session.emit(type="assistant", text=reply, final=True)
+            await _speak(session, track, reply)
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        log.exception("agent loop crashed session=%s", session.id)
+
+
+async def _speak(session: Session, track: TTSAudioTrack, text: str) -> None:
+    await session.emit(type="speaking", text=text, state="start")
+    async for chunk in synthesize(text):
+        await track.push(chunk)
+    await session.emit(type="speaking", text=text, state="end")
 
 
 async def _drop(pc_id: str) -> None:

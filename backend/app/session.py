@@ -21,14 +21,20 @@ log = logging.getLogger("app.session")
 class Session:
     id: str
     pc_id: Optional[str] = None
-    events: asyncio.Queue = field(default_factory=asyncio.Queue)      # STT -> control WS
-    speak_queue: asyncio.Queue = field(default_factory=asyncio.Queue) # control WS -> TTS
+    events: asyncio.Queue = field(default_factory=asyncio.Queue)       # STT -> control WS
+    speak_queue: asyncio.Queue = field(default_factory=asyncio.Queue)  # control WS -> TTS
+    utterance_queue: asyncio.Queue = field(default_factory=asyncio.Queue)  # STT final -> agent
+    latest_frame_jpeg: Optional[bytes] = None
+    latest_frame_hash: Optional[int] = None
 
     async def emit(self, **event) -> None:
         await self.events.put(event)
 
     async def request_speak(self, text: str) -> None:
         await self.speak_queue.put(text)
+
+    async def push_utterance(self, text: str) -> None:
+        await self.utterance_queue.put(text)
 
 
 _sessions: dict[str, Session] = {}

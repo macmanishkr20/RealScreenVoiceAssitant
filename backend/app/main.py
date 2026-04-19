@@ -41,4 +41,4 @@ app.include_router(control_router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "milestone": "M1"}
+    return {"status": "ok", "milestone": "M3"}

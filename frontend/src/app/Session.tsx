@@ -17,7 +17,7 @@ function StatusPill({ label, ok }: { label: string; ok: boolean }) {
 
 export default function Session({ onExit }: { onExit: () => void }) {
   const { status, error, localStream, remoteStream, start, stop } = usePeer();
-  const { open, transcripts, speaking, speak, clearTranscripts } = useControl();
+  const { open, turns, speaking, speak, clearTurns } = useControl();
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const transcriptScrollRef = useRef<HTMLDivElement>(null);
@@ -36,12 +36,16 @@ export default function Session({ onExit }: { onExit: () => void }) {
       top: transcriptScrollRef.current.scrollHeight,
       behavior: "smooth",
     });
-  }, [transcripts.length]);
+  }, [turns.length]);
 
   const notStarted = status === "idle" || status === "error";
-  const finalText = useMemo(
-    () => transcripts.filter((t) => t.final).map((t) => t.text).join(" "),
-    [transcripts],
+  const lastUserFinal = useMemo(
+    () =>
+      turns
+        .filter((t) => t.role === "user" && t.final)
+        .map((t) => t.text)
+        .slice(-1)[0] ?? "",
+    [turns],
   );
 
   return (
@@ -126,9 +130,9 @@ export default function Session({ onExit }: { onExit: () => void }) {
             className="flex flex-col overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-2xl backdrop-blur-md"
           >
             <div className="flex items-center justify-between px-5 py-3 text-xs uppercase tracking-[0.18em] text-white/50">
-              <span>Live transcript</span>
+              <span>Conversation</span>
               <button
-                onClick={clearTranscripts}
+                onClick={clearTurns}
                 className="text-white/50 transition-colors hover:text-white"
               >
                 clear
@@ -138,23 +142,40 @@ export default function Session({ onExit }: { onExit: () => void }) {
               ref={transcriptScrollRef}
               className="h-64 overflow-y-auto px-5 py-4 text-sm leading-relaxed text-white/90"
             >
-              {transcripts.length === 0 && (
+              {turns.length === 0 && (
                 <div className="text-white/40">
                   {status === "connected"
-                    ? "Start talking — your voice will transcribe here."
+                    ? "Start talking — your question appears here and the answer streams back."
                     : "Waiting for connection…"}
                 </div>
               )}
               <AnimatePresence initial={false}>
-                {transcripts.map((t) => (
+                {turns.map((t) => (
                   <motion.div
                     key={t.id}
                     initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: t.final ? 1 : 0.6, y: 0 }}
+                    animate={{ opacity: t.final ? 1 : 0.7, y: 0 }}
                     transition={{ duration: 0.25 }}
-                    className={`mb-1 ${t.final ? "text-white" : "text-white/60 italic"}`}
+                    className="mb-2"
                   >
-                    {t.text}
+                    <div
+                      className={`text-[10px] uppercase tracking-[0.16em] ${
+                        t.role === "assistant" ? "text-sky-300/70" : "text-white/40"
+                      }`}
+                    >
+                      {t.role === "assistant" ? "Assistant" : "You"}
+                    </div>
+                    <div
+                      className={`${
+                        t.role === "assistant"
+                          ? "text-sky-100"
+                          : t.final
+                            ? "text-white"
+                            : "text-white/60 italic"
+                      }`}
+                    >
+                      {t.text}
+                    </div>
                   </motion.div>
                 ))}
               </AnimatePresence>
@@ -165,9 +186,9 @@ export default function Session({ onExit }: { onExit: () => void }) {
         <div className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur-md">
           <div className="mb-3 flex items-center justify-between text-xs uppercase tracking-[0.18em] text-white/50">
             <span>Speak (server TTS → your ear)</span>
-            {finalText && (
+            {lastUserFinal && (
               <span className="normal-case tracking-normal text-white/40">
-                last heard: "{finalText.slice(-60)}"
+                last heard: "{lastUserFinal.slice(-60)}"
               </span>
             )}
           </div>

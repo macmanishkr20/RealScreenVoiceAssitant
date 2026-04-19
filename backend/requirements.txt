@@ -15,8 +15,10 @@ httpx>=0.27.0
 # M2 — Azure Speech (streaming STT + TTS; Azure handles VAD server-side)
 azure-cognitiveservices-speech>=1.40.0
 
-# M4 — Agent Framework + Azure OpenAI
-# openai>=1.54.0
+# M3 — Azure OpenAI GPT-5 vision (single-shot screen-grounded reply)
+openai>=1.54.0
+
+# M4 — Agent Framework
 # agent-framework>=0.1.0
 
 # M5 — Browser tool
