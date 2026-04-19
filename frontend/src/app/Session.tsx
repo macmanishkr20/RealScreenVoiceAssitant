@@ -1,5 +1,5 @@
-import { motion } from "framer-motion";
-import { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePeer } from "../rtc/usePeer";
 import { useControl } from "../ws/useControl";
 import Waveform from "../ui/Waveform";
@@ -17,22 +17,37 @@ function StatusPill({ label, ok }: { label: string; ok: boolean }) {
 
 export default function Session({ onExit }: { onExit: () => void }) {
   const { status, error, localStream, remoteStream, start, stop } = usePeer();
-  const { open, messages, send } = useControl();
+  const { open, transcripts, speaking, speak, clearTranscripts } = useControl();
   const localVideoRef = useRef<HTMLVideoElement>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement>(null);
-  const [text, setText] = useState("");
+  const remoteAudioRef = useRef<HTMLAudioElement>(null);
+  const transcriptScrollRef = useRef<HTMLDivElement>(null);
+  const [speakText, setSpeakText] = useState("");
 
   useEffect(() => {
     if (localVideoRef.current) localVideoRef.current.srcObject = localStream;
   }, [localStream]);
+
   useEffect(() => {
-    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStream;
+    if (remoteAudioRef.current) remoteAudioRef.current.srcObject = remoteStream;
   }, [remoteStream]);
 
+  useEffect(() => {
+    transcriptScrollRef.current?.scrollTo({
+      top: transcriptScrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [transcripts.length]);
+
   const notStarted = status === "idle" || status === "error";
+  const finalText = useMemo(
+    () => transcripts.filter((t) => t.final).map((t) => t.text).join(" "),
+    [transcripts],
+  );
 
   return (
     <main className="relative min-h-screen px-6 py-8">
+      <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
+
       <div className="mx-auto flex max-w-7xl flex-col gap-6">
         <header className="flex items-center justify-between">
           <motion.button
@@ -48,6 +63,7 @@ export default function Session({ onExit }: { onExit: () => void }) {
           <div className="flex gap-2">
             <StatusPill label={`RTC: ${status}`} ok={status === "connected"} />
             <StatusPill label={`Control: ${open ? "open" : "closed"}`} ok={open} />
+            <StatusPill label={speaking ? "TTS speaking" : "TTS idle"} ok={speaking} />
           </div>
         </header>
 
@@ -80,7 +96,7 @@ export default function Session({ onExit }: { onExit: () => void }) {
           </motion.div>
         )}
 
-        <div className="grid gap-6 md:grid-cols-2">
+        <div className="grid gap-6 md:grid-cols-[3fr_2fr]">
           <motion.div
             initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -98,65 +114,84 @@ export default function Session({ onExit }: { onExit: () => void }) {
               playsInline
               className="aspect-video w-full bg-black object-contain"
             />
+            <div className="border-t border-white/5 bg-black/30 px-4 py-3">
+              <Waveform stream={localStream} className="h-16 w-full" />
+            </div>
           </motion.div>
 
           <motion.div
             initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.5, delay: 0.1 }}
-            className="overflow-hidden rounded-3xl border border-white/10 bg-black/40 shadow-2xl backdrop-blur-md"
+            className="flex flex-col overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-2xl backdrop-blur-md"
           >
             <div className="flex items-center justify-between px-5 py-3 text-xs uppercase tracking-[0.18em] text-white/50">
-              <span>Echo from server</span>
-              <span>remote</span>
+              <span>Live transcript</span>
+              <button
+                onClick={clearTranscripts}
+                className="text-white/50 transition-colors hover:text-white"
+              >
+                clear
+              </button>
             </div>
-            <video
-              ref={remoteVideoRef}
-              autoPlay
-              playsInline
-              className="aspect-video w-full bg-black object-contain"
-            />
+            <div
+              ref={transcriptScrollRef}
+              className="h-64 overflow-y-auto px-5 py-4 text-sm leading-relaxed text-white/90"
+            >
+              {transcripts.length === 0 && (
+                <div className="text-white/40">
+                  {status === "connected"
+                    ? "Start talking — your voice will transcribe here."
+                    : "Waiting for connection…"}
+                </div>
+              )}
+              <AnimatePresence initial={false}>
+                {transcripts.map((t) => (
+                  <motion.div
+                    key={t.id}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: t.final ? 1 : 0.6, y: 0 }}
+                    transition={{ duration: 0.25 }}
+                    className={`mb-1 ${t.final ? "text-white" : "text-white/60 italic"}`}
+                  >
+                    {t.text}
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </div>
           </motion.div>
         </div>
 
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-4 backdrop-blur-md">
-          <Waveform stream={localStream} className="h-20 w-full" />
-        </div>
-
         <div className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur-md">
-          <div className="mb-3 text-xs uppercase tracking-[0.18em] text-white/50">
-            Control channel
-          </div>
-          <div className="mb-4 h-40 overflow-y-auto rounded-xl bg-black/30 p-3 text-sm text-white/80">
-            {messages.length === 0 && (
-              <div className="text-white/40">no messages yet</div>
+          <div className="mb-3 flex items-center justify-between text-xs uppercase tracking-[0.18em] text-white/50">
+            <span>Speak (server TTS → your ear)</span>
+            {finalText && (
+              <span className="normal-case tracking-normal text-white/40">
+                last heard: "{finalText.slice(-60)}"
+              </span>
             )}
-            {messages.map((m, i) => (
-              <div key={i} className="py-0.5 font-mono text-xs">
-                {JSON.stringify(m)}
-              </div>
-            ))}
           </div>
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              if (!text.trim()) return;
-              send(text);
-              setText("");
+              const t = speakText.trim();
+              if (!t) return;
+              speak(t);
+              setSpeakText("");
             }}
             className="flex gap-2"
           >
             <input
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="Type a test message…"
+              value={speakText}
+              onChange={(e) => setSpeakText(e.target.value)}
+              placeholder='Type something to hear it back, e.g. "Hello from GPT"'
               className="flex-1 rounded-full border border-white/15 bg-black/40 px-5 py-3 text-sm text-white placeholder:text-white/40 focus:border-white/40 focus:outline-none"
             />
             <button
               type="submit"
               className="rounded-full bg-fog px-5 py-3 text-sm font-medium text-ink transition-transform hover:scale-[1.02]"
             >
-              Send
+              Speak
             </button>
           </form>
         </div>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getSessionId } from "../session";
 
 const BACKEND_WS =
   (import.meta.env.VITE_BACKEND_WS as string | undefined) ?? "ws://127.0.0.1:8000";
@@ -79,7 +80,8 @@ export function usePeer() {
 
       for (const track of combined.getTracks()) pc.addTrack(track, combined);
 
-      const url = `${BACKEND_WS}/ws/signaling?token=${TOKEN}`;
+      const sid = getSessionId();
+      const url = `${BACKEND_WS}/ws/signaling?token=${TOKEN}&sessionId=${sid}`;
       log("ws connect", url);
       const ws = new WebSocket(url);
       wsRef.current = ws;

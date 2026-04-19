@@ -1,8 +1,8 @@
 """WebRTC signaling over WebSocket.
 
-Single-shot offer/answer exchange. The client sends an SDP offer, the
-server creates a PeerConnection and sends back the SDP answer, then the
-socket may stay open for ICE trickle (not strictly required on localhost).
+The client passes `sessionId` as a query param so both signaling and
+control WSes bind to the same Session. Offer/answer exchange is
+single-shot; ICE trickle works implicitly on localhost.
 """
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.config import settings
 from app.rtc.peer import create_peer
+from app.session import get_or_create
 
 log = logging.getLogger("app.ws.signaling")
 router = APIRouter()
@@ -27,6 +28,9 @@ async def signaling(ws: WebSocket):
         log.warning("signaling rejected: bad token")
         return
 
+    session = get_or_create(ws.query_params.get("sessionId"))
+    await ws.send_text(json.dumps({"type": "ready", "sessionId": session.id}))
+
     pc_id: str | None = None
     try:
         while True:
@@ -35,7 +39,7 @@ async def signaling(ws: WebSocket):
             kind = msg.get("type")
 
             if kind == "offer":
-                pc_id, answer = await create_peer(msg["sdp"], msg["sdpType"])
+                pc_id, answer = await create_peer(session, msg["sdp"], msg["sdpType"])
                 await ws.send_text(json.dumps({
                     "type": "answer",
                     "pcId": pc_id,
@@ -47,4 +51,4 @@ async def signaling(ws: WebSocket):
             else:
                 log.warning("signaling: unknown message type=%s", kind)
     except WebSocketDisconnect:
-        log.info("signaling disconnected pc=%s", pc_id)
+        log.info("signaling disconnected pc=%s session=%s", pc_id, session.id)

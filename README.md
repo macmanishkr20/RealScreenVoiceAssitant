@@ -9,16 +9,17 @@ Real-time multimodal assistant: share your screen, speak, and get answers ground
 - **Transport**: WebRTC for media, WebSocket for control
 - **Latency target**: 800 ms p50 speak→first-audio, 1.5 s p95
 
-## Current milestone — M1: Pipes alive
+## Current milestone — M2: Voice in, voice out
 
-M1 proves the transport end-to-end. No AI yet.
+M2 adds Azure Speech on both ends. No GPT yet.
 
-- [x] FastAPI + signaling WS + control WS
-- [x] aiortc PeerConnection that echoes screen + mic back to the client
-- [x] React client with Apple-style landing hero (3D orb, magnetic CTA, shimmer headline)
-- [x] Session view: side-by-side `your screen` / `echo from server` + mic waveform + control echo
+- [x] Session registry (shared state across signaling + control WS)
+- [x] Inbound audio → Azure Speech streaming STT → transcript events on control WS
+- [x] TTS audio track attached to the PC; type text → hear it back through WebRTC
+- [x] Session UI: live transcript panel with partial→final collapsing + Speak form
+- [x] Speech is a soft dep: backend still boots with keys missing (logs a warning)
 
-Upcoming: M2 (VAD+STT), M3 (single-shot GPT-5-mini), M4 (Agent Framework), M5 (browser tool), M6 (Cosmos memory + prompt caching), M7 (UI polish), M8 (telemetry).
+Upcoming: M3 (single-shot GPT-5-mini grounded on screen frame), M4 (Agent Framework), M5 (browser tool), M6 (Cosmos memory + prompt caching), M7 (UI polish), M8 (telemetry).
 
 ## Run it
 
@@ -38,6 +39,15 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
 Health check: open `http://127.0.0.1:8000/health` → `{"status":"ok","milestone":"M1"}`.
 
+For M2 speech, fill in `backend/.env`:
+
+```env
+AZURE_SPEECH_KEY=<from Azure portal → Speech resource → Keys and Endpoint>
+AZURE_SPEECH_REGION=eastus
+```
+
+Then restart uvicorn. If the key is empty, the backend still runs; STT/TTS just log a warning and no-op.
+
 ### 2. Frontend
 
 ```bash
@@ -49,14 +59,16 @@ npm run dev
 
 Then open `http://localhost:5173`.
 
-### What to expect in M1
+### What to expect in M2
 
 1. Landing page with the animated 3D orb hero.
-2. Click **Start a session** → browser asks for screen share + mic.
-3. Session view shows your screen on the left and the **echoed-back** screen from the server on the right. Speak into your mic — if you hear yourself, audio echo works.
-4. Type into the control channel box → server echoes JSON back.
+2. Click **Start a session** → on the next page click **Grant screen + mic**.
+3. Your shared window appears on the left with a live mic waveform below it.
+4. **Speak** — the right panel streams partials in grey italics, finalized text in white.
+5. Type in the **Speak** box at the bottom and hit enter — Azure TTS synthesizes it and you hear the reply through the page (audio element is auto-played from the WebRTC track).
+6. Status pills show `RTC: connected`, `Control: open`, and `TTS speaking/idle`.
 
-If all three round-trips work, M1 is green and we unlock M2.
+If speech panels stay empty, check the backend log for `STT disabled` or `TTS unavailable` — that means the Azure key/region isn't set.
 
 ## `.env` — only places you edit
 
@@ -73,11 +85,12 @@ realtime-assistant/
 │   └── app/
 │       ├── main.py
 │       ├── config.py
+│       ├── session.py
 │       ├── ws/{signaling,control}.py
-│       ├── rtc/peer.py
+│       ├── rtc/{peer,audio_pipeline,tts_track}.py
+│       ├── speech/{stt,tts}.py
 │       ├── agents/        # M4
 │       ├── memory/        # M6
-│       ├── speech/        # M2
 │       └── telemetry/     # M8
 └── frontend/
     ├── .env.example
