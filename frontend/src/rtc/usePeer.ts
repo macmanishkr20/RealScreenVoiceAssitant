@@ -14,6 +14,7 @@ export function usePeer() {
   const [error, setError] = useState<string | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [displaySurface, setDisplaySurface] = useState<string | null>(null);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -29,6 +30,7 @@ export function usePeer() {
     streamRef.current = null;
     setLocalStream(null);
     setRemoteStream(null);
+    setDisplaySurface(null);
     setStatus("idle");
   }, []);
 
@@ -38,9 +40,21 @@ export function usePeer() {
       setStatus("requesting");
 
       log("getDisplayMedia");
+      // Ask the browser to surface its full picker (tabs / windows / monitors)
+      // and let the user switch source mid-session without restarting.
       const display = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: { ideal: 15, max: 30 } },
+        video: {
+          frameRate: { ideal: 15, max: 30 },
+          // @ts-expect-error – Chrome-only constraint, ignored by Safari/Firefox
+          displaySurface: "window",
+        },
         audio: false,
+        // @ts-expect-error – Chrome-only hints to enrich the picker dialog
+        selfBrowserSurface: "exclude",
+        // @ts-expect-error
+        surfaceSwitching: "include",
+        // @ts-expect-error
+        monitorTypeSurfaces: "include",
       });
       log("getUserMedia(audio)");
       const mic = await navigator.mediaDevices.getUserMedia({
@@ -54,7 +68,18 @@ export function usePeer() {
       ]);
       streamRef.current = combined;
       setLocalStream(combined);
+      const videoTrack = display.getVideoTracks()[0];
+      const settings = videoTrack?.getSettings() as
+        | (MediaTrackSettings & { displaySurface?: string })
+        | undefined;
+      const surface = settings?.displaySurface ?? videoTrack?.label ?? null;
+      setDisplaySurface(surface);
       log("local tracks", combined.getTracks().map((t) => `${t.kind}:${t.label}`));
+      log("displaySurface", surface);
+      videoTrack?.addEventListener("ended", () => {
+        log("display track ended");
+        stop();
+      });
 
       setStatus("connecting");
       const pc = new RTCPeerConnection({
@@ -124,9 +149,9 @@ export function usePeer() {
       setError(m);
       setStatus("error");
     }
-  }, []);
+  }, [stop]);
 
   useEffect(() => () => stop(), [stop]);
 
-  return { status, error, localStream, remoteStream, start, stop };
+  return { status, error, localStream, remoteStream, displaySurface, start, stop };
 }

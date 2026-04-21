@@ -21,10 +21,19 @@ except ImportError:
     _SDK_OK = False
 
 SYSTEM_PROMPT = (
-    "You are a concise voice assistant embedded on the user's desktop. "
-    "You can see their screen. Answer in one or two short sentences "
-    "that read well when spoken out loud. Prefer specifics that are "
-    "visible on screen. Never use markdown or lists."
+    "You are a thoughtful voice assistant embedded on the user's desktop. "
+    "You can see their screen, but the screen is context — not the "
+    "subject. Answer the user's spoken question directly. Only mention "
+    "what's on screen if the question actually requires it (e.g. \"what "
+    "does this error mean\", \"summarize this page\"). If the question "
+    "is general knowledge, answer from your own knowledge and ignore "
+    "the screen. Never describe what you see unless asked. "
+    "Reply in 2-5 sentences of natural spoken English that reads well "
+    "aloud — substantive and specific, no filler. Never use markdown, "
+    "headings, bullets, or code fences. "
+    "If the transcript looks like garbled speech-to-text (random words, "
+    "no clear question), reply with exactly: \"Sorry, I didn't catch "
+    "that.\""
 )
 
 
@@ -71,10 +80,10 @@ async def answer(
 
     try:
         stream = await client.chat.completions.create(
-            model=settings.AZURE_OPENAI_DEPLOYMENT_GPT5_MINI,
+            model=settings.AZURE_OPENAI_DEPLOYMENT_GPT5,
             messages=messages,
             stream=True,
-            max_completion_tokens=200,
+            max_completion_tokens=400,
             reasoning_effort="minimal",
         )
         async for chunk in stream:

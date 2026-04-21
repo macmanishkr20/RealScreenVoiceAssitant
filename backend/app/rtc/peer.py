@@ -1,28 +1,27 @@
-"""aiortc PeerConnection wiring (M3).
+"""aiortc PeerConnection wired to the Azure OpenAI Realtime socket.
 
-Inbound audio -> AudioPipeline -> Azure STT -> transcript events on
-session bus, with finalized utterances also pushed onto the utterance
-queue for the agent loop. Inbound video -> FrameSampler keeps the most
-recent JPEG on the session for vision grounding. Outbound: a single
-send-only TTSAudioTrack backed by Azure TTS streams. Two loops consume
-text: `_speak_loop` (direct "speak this" commands from the control WS)
-and `_agent_loop` (STT finals -> GPT -> TTS).
+Inbound audio  ->  AudioPipeline  ->  RealtimeClient.push_audio (24 kHz PCM)
+Inbound video  ->  FrameSampler   ->  session.latest_frame_jpeg
+                                      (pushed to Realtime on speech_started)
+Realtime audio ->  resampled 24 k -> 48 k  ->  outbound TTSAudioTrack
+Realtime events -> session.events queue -> control WS -> UI
+
+Server VAD handles turn-taking; there is no separate STT or TTS stage.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import uuid
-from typing import Dict
+from typing import Dict, List, Optional
 
 from aiortc import RTCPeerConnection, RTCSessionDescription
 
-from app.agents.gpt import answer as gpt_answer
+from app.realtime.client import RealtimeClient
 from app.rtc.audio_pipeline import AudioPipeline
 from app.rtc.frame_sampler import FrameSampler
 from app.rtc.tts_track import TTSAudioTrack
 from app.session import Session
-from app.speech.tts import synthesize
 
 log = logging.getLogger("app.rtc")
 
@@ -32,42 +31,82 @@ _peers: Dict[str, RTCPeerConnection] = {}
 async def create_peer(
     session: Session, offer_sdp: str, offer_type: str
 ) -> tuple[str, RTCSessionDescription]:
+    # If the same browser session is making a fresh offer (e.g. user clicked
+    # "Grant screen + mic" again to re-pick the share) the previous peer is
+    # still alive and happily pushing audio. Tear it down first — otherwise
+    # you hear two models talking at once.
+    if session.pc_id is not None:
+        log.info(
+            "session=%s already had pc=%s — dropping before creating a new one",
+            session.id,
+            session.pc_id,
+        )
+        await _drop(session.pc_id)
+        if session.realtime is not None:
+            await session.realtime.close()
+            session.realtime = None
+        session.pc_id = None
+
     pc = RTCPeerConnection()
     pc_id = uuid.uuid4().hex[:8]
     _peers[pc_id] = pc
     session.pc_id = pc_id
     log.info("[%s] peer created session=%s (total=%d)", pc_id, session.id, len(_peers))
 
-    tts_track = TTSAudioTrack()
-    pc.addTrack(tts_track)
+    out_track = TTSAudioTrack()
+    pc.addTrack(out_track)
 
-    speak_task = asyncio.create_task(
-        _speak_loop(session, tts_track), name=f"speak-{session.id}"
-    )
-    agent_task = asyncio.create_task(
-        _agent_loop(session, tts_track), name=f"agent-{session.id}"
-    )
+    client: Optional[RealtimeClient] = RealtimeClient()
+    try:
+        await client.connect()
+    except Exception:
+        log.exception("realtime connect failed; session will have no voice replies")
+        client = None
+    session.realtime = client
 
-    pipelines: list[AudioPipeline] = []
-    samplers: list[FrameSampler] = []
+    pipelines: List[AudioPipeline] = []
+    samplers: List[FrameSampler] = []
+    bg_tasks: List[asyncio.Task] = []
+
+    if client is not None:
+        bg_tasks.append(
+            asyncio.create_task(
+                _audio_out_loop(session, out_track, client),
+                name=f"rt-audio-out-{session.id}",
+            )
+        )
+        bg_tasks.append(
+            asyncio.create_task(
+                _events_loop(session, client),
+                name=f"rt-events-{session.id}",
+            )
+        )
+    else:
+        await session.emit(
+            type="error",
+            message="Realtime backend unavailable — check AZURE_OPENAI_* settings.",
+        )
 
     @pc.on("connectionstatechange")
     async def _on_state():
         log.info("[%s] connectionState=%s", pc_id, pc.connectionState)
         if pc.connectionState in ("failed", "closed", "disconnected"):
-            speak_task.cancel()
-            agent_task.cancel()
+            for t in bg_tasks:
+                t.cancel()
             for p in pipelines:
                 p.stop()
             for s in samplers:
                 s.stop()
+            if session.realtime is not None:
+                await session.realtime.close()
+                session.realtime = None
             await _drop(pc_id)
 
     @pc.on("track")
     def _on_track(track):
         log.info("[%s] inbound track kind=%s id=%s", pc_id, track.kind, track.id)
-        if track.kind == "audio":
-            p = AudioPipeline(session, track)
+        if track.kind == "audio" and client is not None:
+            p = AudioPipeline(session, track, client)
             p.start()
             pipelines.append(p)
         elif track.kind == "video":
@@ -86,54 +125,79 @@ async def create_peer(
     return pc_id, pc.localDescription
 
 
-async def _speak_loop(session: Session, track: TTSAudioTrack) -> None:
-    """Drain session.speak_queue; synthesize each text and push PCM into the track."""
+async def _audio_out_loop(
+    session: Session, track: TTSAudioTrack, client: RealtimeClient
+) -> None:
+    """Feed the browser-bound 24 kHz track directly from the Realtime stream.
+    Skipping a manual 24→48 kHz resampler removes micro-gaps at chunk
+    boundaries — aiortc's Opus encoder handles the upsample."""
     try:
-        while True:
-            text = await session.speak_queue.get()
-            await _speak(session, track, text)
+        async for chunk in client.iter_audio():
+            if chunk:
+                await track.push(chunk)
     except asyncio.CancelledError:
         pass
     except Exception:
-        log.exception("speak loop crashed session=%s", session.id)
+        log.exception("realtime audio-out loop crashed session=%s", session.id)
 
 
-async def _agent_loop(session: Session, track: TTSAudioTrack) -> None:
-    """Drain STT final utterances; ask GPT grounded on the latest frame; speak the reply."""
+async def _events_loop(session: Session, client: RealtimeClient) -> None:
+    """Translate Realtime events into frontend control-WS events, and push a
+    fresh screen frame when the user starts speaking so the model has context
+    for the reply."""
+    assistant_text = ""
+    last_image_hash: Optional[int] = None
     try:
-        while True:
-            transcript = await session.utterance_queue.get()
-            if len(transcript.split()) < 2:
-                log.info("agent: skipping trivial utterance %r", transcript)
-                continue
-            frame = session.latest_frame_jpeg
-            log.info(
-                "agent turn session=%s transcript=%r frame=%s",
-                session.id,
-                transcript[:80],
-                f"{len(frame)}B" if frame else "none",
-            )
-            reply = ""
-            async for text_chunk in gpt_answer(transcript, frame):
-                reply += text_chunk
-                await session.emit(type="assistant", text=reply, final=False)
-            reply = reply.strip()
-            if not reply:
-                log.warning("agent: empty reply for %r", transcript[:60])
-                continue
-            await session.emit(type="assistant", text=reply, final=True)
-            await _speak(session, track, reply)
+        async for evt in client.iter_events():
+            t = evt.get("type", "")
+
+            if t == "input_audio_buffer.speech_started":
+                # User began talking. Drop any stale TTS state, and if we have
+                # a fresh screen frame, attach it as visual context for this turn.
+                await session.emit(type="speaking", text="", state="end")
+                h = session.latest_frame_hash
+                jpeg = session.latest_frame_jpeg
+                if jpeg and h is not None and h != last_image_hash:
+                    await client.push_image(jpeg)
+                    last_image_hash = h
+                    log.info(
+                        "realtime: attached frame (%d B) on speech_started", len(jpeg)
+                    )
+
+            elif t == "conversation.item.input_audio_transcription.completed":
+                text = (evt.get("transcript") or "").strip()
+                if text:
+                    await session.emit(type="transcript", text=text, final=True)
+
+            elif t == "response.created":
+                assistant_text = ""
+                await session.emit(type="speaking", text="", state="start")
+
+            elif t == "response.audio_transcript.delta":
+                delta = evt.get("delta") or ""
+                if delta:
+                    assistant_text += delta
+                    await session.emit(
+                        type="assistant", text=assistant_text, final=False
+                    )
+
+            elif t == "response.audio_transcript.done":
+                final_text = (evt.get("transcript") or assistant_text).strip()
+                if final_text:
+                    await session.emit(type="assistant", text=final_text, final=True)
+
+            elif t == "response.done":
+                await session.emit(type="speaking", text="", state="end")
+                assistant_text = ""
+
+            elif t == "error":
+                err = evt.get("error") or {}
+                await session.emit(type="error", message=str(err))
+
     except asyncio.CancelledError:
         pass
     except Exception:
-        log.exception("agent loop crashed session=%s", session.id)
-
-
-async def _speak(session: Session, track: TTSAudioTrack, text: str) -> None:
-    await session.emit(type="speaking", text=text, state="start")
-    async for chunk in synthesize(text):
-        await track.push(chunk)
-    await session.emit(type="speaking", text=text, state="end")
+        log.exception("realtime events loop crashed session=%s", session.id)
 
 
 async def _drop(pc_id: str) -> None:

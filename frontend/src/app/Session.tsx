@@ -16,7 +16,7 @@ function StatusPill({ label, ok }: { label: string; ok: boolean }) {
 }
 
 export default function Session({ onExit }: { onExit: () => void }) {
-  const { status, error, localStream, remoteStream, start, stop } = usePeer();
+  const { status, error, localStream, remoteStream, displaySurface, start, stop } = usePeer();
   const { open, turns, speaking, speak, clearTurns } = useControl();
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
@@ -64,10 +64,13 @@ export default function Session({ onExit }: { onExit: () => void }) {
           >
             ← Back
           </motion.button>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <StatusPill label={`RTC: ${status}`} ok={status === "connected"} />
             <StatusPill label={`Control: ${open ? "open" : "closed"}`} ok={open} />
             <StatusPill label={speaking ? "TTS speaking" : "TTS idle"} ok={speaking} />
+            {displaySurface && (
+              <StatusPill label={`Sharing: ${displaySurface}`} ok={true} />
+            )}
           </div>
         </header>
 
@@ -84,11 +87,15 @@ export default function Session({ onExit }: { onExit: () => void }) {
             className="flex flex-col items-center gap-4 rounded-3xl border border-white/10 bg-white/5 px-6 py-10 text-center backdrop-blur-md"
           >
             <p className="text-sm text-white/70">
-              Click below to grant screen-share and microphone access.
+              Click below to open the share picker. <strong>Pick a specific
+              Window or Tab</strong> if you want the assistant locked to a
+              single app — choosing <em>Entire Screen</em> means it sees
+              whatever is on top.
               <br />
               <span className="text-xs text-white/40">
-                macOS: if no window picker appears, enable Chrome in{" "}
-                <em>System Settings → Privacy &amp; Security → Screen Recording</em>, then reload.
+                Best on Chrome (richer picker). On macOS, allow the browser
+                under <em>System Settings → Privacy &amp; Security → Screen Recording</em> if
+                no picker appears, then reload.
               </span>
             </p>
             <button

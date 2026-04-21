@@ -1,10 +1,16 @@
-"""Outbound WebRTC audio track fed by Azure TTS.
+"""Outbound WebRTC audio track fed by the Azure OpenAI Realtime socket.
 
 aiortc's encoder wants a steady stream of AudioFrames at the track's
-declared sample rate. We declare 48 kHz mono and `recv()` emits one
-20 ms frame every 20 ms: either spoken audio pulled off the byte queue
-or silence if nothing is queued. Keeping the cadence constant is what
-lets the Opus encoder (and the browser's jitter buffer) stay sane.
+declared sample rate. We declare 24 kHz mono to match the Realtime
+output format and push raw PCM bytes straight through — aiortc's Opus
+encoder resamples to 48 kHz internally for the wire. Skipping a manual
+24→48 kHz resampling step removes the micro-gaps at chunk boundaries
+that were making the voice sound choppy.
+
+`recv()` emits one 20 ms frame every 20 ms: either spoken audio pulled
+off the byte queue, or silence if nothing is queued. Keeping the cadence
+constant is what lets the Opus encoder (and the browser's jitter buffer)
+stay sane.
 """
 from __future__ import annotations
 
@@ -19,14 +25,15 @@ from aiortc.mediastreams import MediaStreamTrack
 
 log = logging.getLogger("app.rtc.tts")
 
-_SAMPLE_RATE = 48000
+_SAMPLE_RATE = 24000
 _FRAME_MS = 20
-_SAMPLES_PER_FRAME = _SAMPLE_RATE * _FRAME_MS // 1000  # 960
+_SAMPLES_PER_FRAME = _SAMPLE_RATE * _FRAME_MS // 1000  # 480
 _BYTES_PER_FRAME = _SAMPLES_PER_FRAME * 2              # 16-bit
 
 
 class TTSAudioTrack(MediaStreamTrack):
-    """A send-only audio track backed by a byte queue of 48 k / 16-bit PCM."""
+    """A send-only audio track backed by a byte queue of 24 k / 16-bit PCM.
+    aiortc's Opus encoder resamples to 48 kHz on its way out to the browser."""
 
     kind = "audio"
 
@@ -41,6 +48,21 @@ class TTSAudioTrack(MediaStreamTrack):
         async with self._cv:
             self._buf.extend(pcm)
             self._cv.notify_all()
+
+    async def clear(self) -> None:
+        """Drop any queued audio — used when a turn is cancelled so the
+        old reply doesn't keep playing into the new one."""
+        async with self._cv:
+            self._buf.clear()
+            self._cv.notify_all()
+
+    async def wait_drained(self) -> None:
+        """Block until the buffer has been fully consumed by recv()."""
+        while True:
+            async with self._cv:
+                if not self._buf:
+                    return
+            await asyncio.sleep(_FRAME_MS / 1000)
 
     async def stream_from(
         self,

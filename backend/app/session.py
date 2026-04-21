@@ -1,8 +1,9 @@
 """Per-session state shared across signaling and control WebSockets.
 
 Each browser session is identified by `session_id`. The signaling WS
-creates the Session and wires it to the PeerConnection; the control
-WS attaches and pumps transcript events out / speak commands in.
+creates the Session, brings up a RealtimeClient, and wires both into a
+PeerConnection. The control WS attaches and pumps transcript events out /
+typed user input in.
 
 Single-user mode: a handful of sessions live in-memory, no DB.
 """
@@ -12,7 +13,10 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from app.realtime.client import RealtimeClient
 
 log = logging.getLogger("app.session")
 
@@ -21,20 +25,13 @@ log = logging.getLogger("app.session")
 class Session:
     id: str
     pc_id: Optional[str] = None
-    events: asyncio.Queue = field(default_factory=asyncio.Queue)       # STT -> control WS
-    speak_queue: asyncio.Queue = field(default_factory=asyncio.Queue)  # control WS -> TTS
-    utterance_queue: asyncio.Queue = field(default_factory=asyncio.Queue)  # STT final -> agent
+    events: asyncio.Queue = field(default_factory=asyncio.Queue)  # server -> control WS
     latest_frame_jpeg: Optional[bytes] = None
     latest_frame_hash: Optional[int] = None
+    realtime: Optional["RealtimeClient"] = None
 
     async def emit(self, **event) -> None:
         await self.events.put(event)
-
-    async def request_speak(self, text: str) -> None:
-        await self.speak_queue.put(text)
-
-    async def push_utterance(self, text: str) -> None:
-        await self.utterance_queue.put(text)
 
 
 _sessions: dict[str, Session] = {}
